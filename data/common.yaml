@@ -1,0 +1,4 @@
+---
+docker::image_dir::owner: root
+docker::image_dir::group: root
+docker::image_dir::mode: "770"

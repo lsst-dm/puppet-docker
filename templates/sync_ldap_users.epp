@@ -1,0 +1,91 @@
+<%- | String  $ldapsearch_cmd,
+      String  $ldapsearch_opts,
+      String  $ldapsearch_host,
+      String  $ldapsearch_dnbase,
+      String  $ldapsearch_query,
+      String  $ldapsearch_field
+| -%>
+#!/bin/bash
+
+###
+# SYNC LDAP GROUP TO LOCAL docker GROUP
+###
+
+DEBUG=0
+
+ts=$( date +"%s" )
+tmpfn="/root/sync_ldap_users-$ts"
+dump_debug=0
+
+function get_ldap_userlist() {
+    local CMD=<%= $ldapsearch_cmd %>
+    local OPTS='<%= $ldapsearch_opts -%>'
+    local HOST='<%= $ldapsearch_host -%>'
+    local BASE='<%= $ldapsearch_dnbase -%>'
+    local QUERY='<%= $ldapsearch_query -%>'
+    local FIELD='<%= $ldapsearch_field -%>'
+    $CMD $OPTS -H $HOST -b $BASE $QUERY $FIELD \
+    | awk '
+        $1 ~ /^<%= $ldapsearch_field -%>:/ {
+            split( $2, fields, /,/ )
+            split( fields[1], parts, /=/ )
+            print parts[2]
+        }
+    ' \
+    | sort -u
+}
+
+function get_local_userlist() {
+    getent group docker \
+    | cut -d':' -f4 \
+    | tr ',' "\n" \
+    | egrep -v '^$' \
+    | sort -u
+}
+
+[[ $DEBUG -eq 1 ]] && set -x
+
+# Get data
+LDAPUSERS=$( get_ldap_userlist )
+LOCALUSERS=$( get_local_userlist )
+
+# Exit if no differences
+if diff -q <(echo "$LDAPUSERS") <(echo "$LOCALUSERS") &>/dev/null ; then
+   exit 0
+fi
+
+{
+[[ $DEBUG -eq 1 ]] && set -x
+
+ADDUSERS=`comm -23 <(echo "$LDAPUSERS") <(echo "$LOCALUSERS")`
+DELUSERS=`comm -13 <(echo "$LDAPUSERS") <(echo "$LOCALUSERS")`
+if [[ $DEBUG -eq 1 ]] ; then
+    echo "New users to add to docker group:"
+    echo "$ADDUSERS" | nl
+    echo "Old users to remove from docker group:"
+    echo "$DELUSERS" | nl
+fi
+
+action=''
+[[ $DEBUG -eq 1 ]] && action='echo'
+
+## FOR EACH $ADDUSERS
+if [[ -n "$ADDUSERS" ]] ; then
+    dump_debug=1
+    while read -r USER; do
+        $action gpasswd --add $USER docker
+    done <<< "$ADDUSERS"
+fi
+
+## FOR EACH $DELUSERS
+if [[ -n "$DELUSERS" ]] ; then
+    dump_debug=1
+    while read -r USER; do
+        $action gpasswd --delete $USER docker
+    done <<< "$DELUSERS"
+fi
+set +x
+} &>$tmpfn
+
+cat $tmpfn
+[[ $DEBUG -ne 1 ]] && rm -rf $tmpfn

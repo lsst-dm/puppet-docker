@@ -1,0 +1,7 @@
+---
+docker::required_pkgs:
+  - docker-engine
+docker::service_name: docker
+docker::yumrepo_baseurl: https://yum.dockerproject.org/repo/main/centos/$releasever/
+docker::sync_ldap_users::required_pkgs:
+  - openldap-clients
